@@ -27,42 +27,71 @@ const TradingDashboard = () => {
         { name: "May", passive: 1600, aggressive: 2400, balanced: 1900 },
     ]);
     const [modalVisible, setModalVisible] = useState(false);
+    const [btcModalVisible, setBtcModalVisible] = useState(false);
     const [depositAmount, setDepositAmount] = useState("");
-    const [selectedCurrency, setSelectedCurrency] = useState("SGD"); // Currency selection state
-    const [exchangeRates, setExchangeRates] = useState({}); // Store multiple exchange rates
-    const [totalAssetValue, setTotalAssetValue] = useState(0); // Initialize total asset value in USD
-    const [notification, setNotification] = useState(""); // State for notification message
-    const [notificationVisible, setNotificationVisible] = useState(false); // State for notification visibility
+    const [selectedCurrency, setSelectedCurrency] = useState("SGD");
+    const [exchangeRates, setExchangeRates] = useState({});
+    const [totalAssetValue, setTotalAssetValue] = useState(0);
+    const [btcToUsdRate, setBtcToUsdRate] = useState(0); // BTC to USD rate
+    const [notification, setNotification] = useState("");
+    const [modalAmount, setModalAmount] = useState('');  // Add this line for modal amount
+    const [notificationVisible, setNotificationVisible] = useState(false);
 
     useEffect(() => {
         const fetchExchangeRates = async () => {
             try {
-                const response = await axios.get(
-                    "https://api.exchangerate-api.com/v4/latest/USD" // Fetch exchange rates based on USD
-                );
-                setExchangeRates(response.data.rates);
+                const response = await axios.get("https://api.freecurrencyapi.com/v1/latest?apikey=fca_live_hBfofqKfn1IYRgCH36cP9JbVL5uWNykz4uu248Ju");
+
+                console.log("API Response:", response.data);  // Check full API response
+
+                setExchangeRates(response.data.data);
             } catch (error) {
                 console.error("Error fetching exchange rates:", error);
             }
         };
 
         fetchExchangeRates();
+
+        const fetchBtcToUsdRate = async () => {
+            try {
+                const response = await axios.get(
+                    "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+                );
+                setBtcToUsdRate(response.data.bitcoin.usd);
+            } catch (error) {
+                console.error("Error fetching BTC to USD rate:", error);
+            }
+        };
+
+        fetchExchangeRates();
+        fetchBtcToUsdRate();
     }, []);
 
     const toggleModal = () => setModalVisible(!modalVisible);
-
+    const toggleBtcModal = () => setBtcModalVisible(!btcModalVisible);
     const navigate = useNavigate();
 
     const handleDeposit = (amountCurrency) => {
         const exchangeRate = exchangeRates[selectedCurrency];
+
         if (!exchangeRate) {
             alert("Exchange rate not available for selected currency.");
             return;
         }
-        const amountUSD = parseFloat(amountCurrency) * exchangeRate; // Convert to USD
-        const newTotalAssetValue = totalAssetValue + amountUSD;
-        setTotalAssetValue(newTotalAssetValue); // Update the total asset value
 
+        // Check if the API provides 1 USD = X RUB or 1 RUB = X USD
+        const isInverted = exchangeRates["USD"] > exchangeRates["RUB"]; // If USD rate is higher than RUB rate, it needs inversion
+        const correctedRate = isInverted ? (1 / exchangeRate) : exchangeRate;
+
+        const amountUSD = parseFloat(amountCurrency) / correctedRate;
+
+        console.log(`Converted ${amountCurrency} ${selectedCurrency} to ${amountUSD} USD`);
+
+        // Update total assets
+        const newTotalAssetValue = totalAssetValue + amountUSD;
+        setTotalAssetValue(newTotalAssetValue);
+
+        // Update overall portfolio distribution
         setOverallData((prevData) =>
             prevData.map((item) => ({
                 ...item,
@@ -72,9 +101,45 @@ const TradingDashboard = () => {
             }))
         );
 
+        // Format USD amount for display consistency
+        const formattedAmountUSD = amountUSD.toLocaleString(undefined, {
+            minimumFractionDigits: 6,
+            maximumFractionDigits: 6
+        });
+
+        // Update modal with correct values
         setDepositAmount("");
         setModalVisible(false);
-        showNotification(`Deposited ${amountCurrency} ${selectedCurrency}, equivalent to ${amountUSD.toFixed(2)} USD`);
+
+        // Show correct conversion in the modal & notification
+        showNotification(`Deposited ${amountCurrency} ${selectedCurrency}, equivalent to USD ${formattedAmountUSD}`);
+
+        // Assuming the modal has a state variable `modalAmount`
+        setModalAmount(formattedAmountUSD);
+    };
+
+    const handleBtcDeposit = (btcAmount) => {
+        const btcInUsd = parseFloat(btcAmount) * btcToUsdRate;
+        if (!btcToUsdRate) {
+            alert("BTC to USD exchange rate not available.");
+            return;
+        }
+
+        const newTotalAssetValue = totalAssetValue + btcInUsd;
+        setTotalAssetValue(newTotalAssetValue);
+
+        setOverallData((prevData) =>
+            prevData.map((item) => ({
+                ...item,
+                passive: item.passive + btcInUsd * (item.passive / newTotalAssetValue),
+                aggressive: item.aggressive + btcInUsd * (item.aggressive / newTotalAssetValue),
+                balanced: item.balanced + btcInUsd * (item.balanced / newTotalAssetValue),
+            }))
+        );
+
+        setDepositAmount("");
+        setBtcModalVisible(false);
+        showNotification(`Deposited ${btcAmount} BTC, equivalent to USD ${btcInUsd.toFixed(2)}`);
     };
 
     useEffect(() => {
@@ -87,9 +152,8 @@ const TradingDashboard = () => {
                     balanced: item.balanced + Math.floor(Math.random() * 1000 - 500),
                 }));
 
-                // Calculate the new total asset value after the data update
                 const newTotalAssetValue = newData.reduce((acc, item) => acc + item.passive + item.aggressive + item.balanced, 0);
-                setTotalAssetValue(newTotalAssetValue); // Update the total asset value
+                setTotalAssetValue(newTotalAssetValue);
 
                 return newData;
             });
@@ -98,14 +162,14 @@ const TradingDashboard = () => {
         return () => clearInterval(interval);
     }, []);
 
+    // Updated Pie Chart Data - Passive, Aggressive, Balanced
     const pieData = [
-        { name: "Stocks", value: 40 },
-        { name: "Bonds", value: 30 },
-        { name: "Crypto", value: 20 },
-        { name: "Commodities", value: 10 },
+        { name: "Passive", value: overallData.reduce((acc, item) => acc + item.passive, 0) },
+        { name: "Aggressive", value: overallData.reduce((acc, item) => acc + item.aggressive, 0) },
+        { name: "Balanced", value: overallData.reduce((acc, item) => acc + item.balanced, 0) },
     ];
 
-    const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042"];
+    const COLORS = ["#0088FE", "#00C49F", "#FF8042"];
 
     const calculateSelectedPortfolioValue = () => {
         return overallData.reduce((acc, item) => acc + item[portfolioType.toLowerCase()], 0);
@@ -114,18 +178,21 @@ const TradingDashboard = () => {
     const showNotification = (message) => {
         setNotification(message);
         setNotificationVisible(true);
-        setTimeout(() => setNotificationVisible(false), 5000); // Hide notification after 5 seconds
+        setTimeout(() => setNotificationVisible(false), 5000);
     };
 
     return (
         <div style={theme === "dark" ? styles.darkContainer : styles.lightContainer}>
             <nav style={styles.navbar}>
-                <h2>Dex Portfolio</h2>
+                <h2>Bryan's Portfolio</h2>
                 <div style={styles.navButtons}>
                     <button style={styles.navButton} onClick={toggleModal}>
-                        <FaDollarSign /> Deposit
+                        <FaDollarSign /> Deposit (Forex)
                     </button>
-                    <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} style={styles.navButton}>
+                    <button style={styles.navButton} onClick={toggleBtcModal}>
+                        <FaExchangeAlt /> Deposit BTC
+                    </button>
+                    <button style={styles.navButton} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
                         {theme === "dark" ? <FaSun /> : <FaMoon />} Toggle Theme
                     </button>
                 </div>
@@ -138,7 +205,7 @@ const TradingDashboard = () => {
                     <FaDollarSign style={styles.cardIcon} />
                     <h2>Overview Asset Value</h2>
                 </div>
-                <p style={styles.cardValue}>Total: ${totalAssetValue.toFixed(2)}</p> {/* Display total in USD */}
+                <p style={styles.cardValue}>Total: USD {totalAssetValue.toFixed(2)}</p>
             </div>
 
             <div style={styles.chartContainer}>
@@ -203,10 +270,11 @@ const TradingDashboard = () => {
                 </ResponsiveContainer>
             </div>
 
+            {/* Forex Deposit Modal */}
             {modalVisible && (
                 <div style={styles.modal}>
                     <div style={styles.modalContent}>
-                        <h3 style={styles.modalTitle}>Deposit Amount</h3>
+                        <h3 style={styles.modalTitle}>Deposit Forex Amount</h3>
                         <div style={styles.currencySelector}>
                             <label htmlFor="currency">Select Currency:</label>
                             <select
@@ -229,12 +297,42 @@ const TradingDashboard = () => {
                             style={styles.input}
                             placeholder={`Enter amount in ${selectedCurrency}`}
                         />
-                        <p>Equivalent in USD: ${(depositAmount * (exchangeRates[selectedCurrency] || 1)).toFixed(2)}</p>
+                        <p>
+                            Equivalent in USD:
+                            {(
+                                depositAmount * (selectedCurrency === "USD" ? 1 : (1 / (exchangeRates[selectedCurrency] || 1)))
+                            ).toFixed(4)}
+                        </p>
                         <div style={styles.modalButtons}>
                             <button onClick={() => handleDeposit(depositAmount)} style={styles.modalButton}>
                                 Deposit
                             </button>
                             <button onClick={toggleModal} style={styles.modalCloseButton}>
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* BTC Deposit Modal */}
+            {btcModalVisible && (
+                <div style={styles.modal}>
+                    <div style={styles.modalContent}>
+                        <h3 style={styles.modalTitle}>Deposit BTC Amount</h3>
+                        <input
+                            type="number"
+                            value={depositAmount}
+                            onChange={(e) => setDepositAmount(e.target.value)}
+                            style={styles.input}
+                            placeholder="Enter amount in BTC"
+                        />
+                        <p>Equivalent in USD: USD {(depositAmount * btcToUsdRate).toFixed(2)}</p>
+                        <div style={styles.modalButtons}>
+                            <button onClick={() => handleBtcDeposit(depositAmount)} style={styles.modalButton}>
+                                Deposit
+                            </button>
+                            <button onClick={toggleBtcModal} style={styles.modalCloseButton}>
                                 Close
                             </button>
                         </div>
